@@ -37,13 +37,19 @@ const MagicalParticles = () => {
     
     const interval = setInterval(() => {
       setParticles(prevParticles => 
-        prevParticles.map(particle => ({
-          ...particle,
-          y: particle.y - particle.speed,
-          x: particle.x + Math.sin(particle.y / 100) * 0.5,
-          opacity: particle.y < -10 ? 0 : particle.opacity,
-          y: particle.y < -10 ? window.innerHeight + 10 : particle.y - particle.speed,
-        }))
+        prevParticles.map(particle => {
+          const newY = particle.y - particle.speed;
+          const newX = particle.x + Math.sin(particle.y / 100) * 0.5;
+          const resetY = newY < -10 ? window.innerHeight + 10 : newY;
+          const newOpacity = newY < -10 ? particle.opacity : particle.opacity;
+          
+          return {
+            ...particle,
+            y: resetY,
+            x: newX,
+            opacity: newOpacity,
+          };
+        })
       );
     }, 50);
 
