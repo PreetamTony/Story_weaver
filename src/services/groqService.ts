@@ -7,7 +7,14 @@ interface StoryConfig {
   plot: string;
   characters: string;
   tone: string;
-  audience: string;
+  audience: 'children' | 'young-adult' | 'adult';
+}
+
+export interface WordDefinition {
+  word: string;
+  definition: string;
+  example: string;
+  partOfSpeech: string;
 }
 
 interface GroqResponse {
@@ -19,6 +26,93 @@ interface GroqResponse {
 }
 
 export class GroqService {
+  private static cleanResponseText(text: string): string {
+    // Remove <think> tags and their content
+    let cleaned = text.replace(/<think>[\s\S]*?<\/think>/g, '');
+    
+    // Remove any remaining standalone think tags
+    cleaned = cleaned.replace(/<\/?think>/g, '');
+    
+    // Clean up any double newlines that might result from the removal
+    cleaned = cleaned.replace(/\n{3,}/g, '\n\n');
+    
+    return cleaned.trim();
+  }
+
+  private static getLanguageLevel(audience: string): string {
+    switch (audience.toLowerCase()) {
+      case 'children':
+        return 'Use simple words and short sentences. Aim for a 6-8 year old reading level.';
+      case 'young-adult':
+        return 'Use clear language with some more complex vocabulary. Aim for a 12+ year old reading level.';
+      default:
+        return 'Use natural language appropriate for adult readers.';
+    }
+  }
+
+  static async getWordDefinition(word: string, context?: string): Promise<WordDefinition> {
+    // Basic input validation
+    if (!word || typeof word !== 'string' || word.trim().length === 0) {
+      throw new Error('Please enter a valid word');
+    }
+
+    // Remove any surrounding quotes or special characters
+    const cleanWord = word.replace(/[^\w\s]/g, '').trim().toLowerCase();
+    
+    if (cleanWord.split(/\s+/).length > 2) {
+      throw new Error('Please enter a single word or short phrase (max 2 words)');
+    }
+
+    try {
+      const prompt = `Provide a simple, child-friendly definition for the word or phrase "${cleanWord}"${context ? ` as used in this context: "${context}"` : ''}.
+      
+      If the word is a proper noun, name, or not a valid English word, explain this in a helpful way.
+      
+      Format your response as a JSON object with these exact keys:
+      {
+        "word": "the word or phrase being defined",
+        "definition": "simple, clear, and child-friendly definition",
+        "example": "an example sentence using the word",
+        "partOfSpeech": "noun/verb/adjective/adverb/phrase/name"
+      }`;
+
+      const response = await fetch(GROQ_API_URL, {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${GROQ_API_KEY}`,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          model: 'deepseek-r1-distill-llama-70b',
+          messages: [
+            {
+              role: 'system',
+              content: 'You are a helpful dictionary assistant. Provide clear, simple definitions and examples.'
+            },
+            {
+              role: 'user',
+              content: prompt
+            }
+          ],
+          temperature: 0.3,
+          max_tokens: 200,
+          response_format: { type: 'json_object' }
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`API request failed: ${response.status}`);
+      }
+
+      const data = await response.json();
+      const content = JSON.parse(data.choices[0]?.message?.content || '{}');
+      return content as WordDefinition;
+    } catch (error) {
+      console.error('Error getting word definition:', error);
+      throw new Error('Failed to get word definition. Please try again.');
+    }
+  }
+
   private static async makeRequest(prompt: string): Promise<string> {
     try {
       const response = await fetch(GROQ_API_URL, {
@@ -32,7 +126,7 @@ export class GroqService {
           messages: [
             {
               role: 'system',
-              content: 'You are a creative storytelling AI that generates engaging, well-structured stories. Always respond with properly formatted content.'
+              content: 'You are a creative storytelling AI that generates engaging, well-structured stories. Always respond with properly formatted content. Never include any internal reasoning, thinking, or meta-commentary in your responses. Only provide the direct output that should be shown to the user.'
             },
             {
               role: 'user',
@@ -49,7 +143,8 @@ export class GroqService {
       }
 
       const data: GroqResponse = await response.json();
-      return data.choices[0]?.message?.content || '';
+      const content = data.choices[0]?.message?.content || '';
+      return this.cleanResponseText(content);
     } catch (error) {
       console.error('Groq API error:', error);
       throw new Error('Failed to generate content. Please try again.');
@@ -78,6 +173,14 @@ export class GroqService {
       ? `\n\nPrevious chapters summary: ${previousChapters.join(' ')}`
       : '';
 
+    const isFinalChapter = chapterTitle.toLowerCase().includes('final') || chapterTitle.toLowerCase().includes('epilogue');
+    
+    const languageLevel = this.getLanguageLevel(config.audience);
+    const audienceInstructions = config.audience === 'children' ? 
+      '- Use simple words and short sentences\n' +
+      '- Include some dialogue to make it engaging for children\n' +
+      '- Use descriptive language that paints a clear picture\n' : '';
+
     const prompt = `Write Chapter ${chapterNumber} titled "${chapterTitle}" for the ${config.theme} story "${storyTitle}".
 
 Story Details:
@@ -85,17 +188,21 @@ Story Details:
 - Plot: ${config.plot}
 - Characters: ${config.characters}
 - Tone: ${config.tone}
-- Target Audience: ${config.audience}${contextText}
+- Target Audience: ${config.audience} (${languageLevel})${contextText}
 
 Requirements:
 - Write 3-4 engaging paragraphs (400-600 words)
 - Match the ${config.tone} tone perfectly
-- Appropriate for ${config.audience} audience
-- Include character development and plot progression
+- ${languageLevel}
+${audienceInstructions}- Include character development and plot progression
 - Use vivid descriptions and dialogue
-- End with a compelling hook for the next chapter
+${isFinalChapter ? 
+  '- Provide a satisfying conclusion that resolves the main plot points\n' + 
+  '- Include a meaningful moral or lesson that fits the story naturally\n' + 
+  '- End with a sense of closure while leaving room for the reader\'s imagination' : 
+  '- End with a compelling hook for the next chapter'}
 
-Return ONLY the chapter content, no extra formatting or labels.`;
+Return ONLY the chapter content, no extra formatting, labels, or internal reasoning.`;
 
     const content = await this.makeRequest(prompt);
     return {

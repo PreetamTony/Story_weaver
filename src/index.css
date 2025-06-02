@@ -47,7 +47,16 @@
   }
 }
 
+/* Custom Cursor */
 @layer base {
+  html, body {
+    cursor: url('https://i.ibb.co/vRrz9Pn/13.png'), auto;
+  }
+  
+  button, a, input, textarea, select, [role="button"], [role="menuitem"] {
+    cursor: url('https://i.ibb.co/vRrz9Pn/13.png'), pointer !important;
+  }
+
   * {
     @apply border-border;
   }
